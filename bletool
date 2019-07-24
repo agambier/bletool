@@ -110,19 +110,17 @@ def process( data ):
 
 	# get mac address
 	mac = getBeaconAttribute( event, "peer" )
-	if not mac:
-		return
-
-	if g_opts.mac:
-		# searching for specific MAC addresses ?
-		if mac in g_opts.mac:
+	if mac:
+		if g_opts.mac:
+			# searching for specific MAC addresses ?
+			if mac in g_opts.mac:
+				displayBeacon( event )
+				if g_opts.exit:
+					g_exitCode = EXIT_SUCCESS
+					g_eventLoop.stop()
+		else:
+			# display beacon
 			displayBeacon( event )
-			if g_opts.exit:
-				g_exitCode = EXIT_SUCCESS
-				g_eventLoop.stop()
-	else:
-		# display beacon
-		displayBeacon( event )
 
 	# exit with timeout ?
 	if g_opts.timeout and ( ( time.perf_counter() - g_startCounter ) >= g_opts.timeout ):
