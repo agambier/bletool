@@ -9,13 +9,14 @@ import argparse
 import re
 import aioblescan as aiobs
 import asyncio
+import time
 
 # Script information
-APP_VERSION = '0.01'
+APP_VERSION = '0.10'
 APP_NAME = os.path.basename(__file__)
-APP_DESCRIPTION = "Beacon tools"
+APP_DESCRIPTION = "BLE tools"
 APP_AUTHOR = "Alexandre Gambier"
-APP_WWW = "https://github.com/agambier/beacon-tool"
+APP_WWW = "https://github.com/agambier/bletool"
 APP_RIGHTS = "(C) 2019 " + APP_AUTHOR
 
 # exit codes
@@ -23,10 +24,12 @@ EXIT_SUCCESS = 0
 EXIT_INVALID_COMMAND_LINE = 1
 EXIT_DISPLAYED_VERSION = 2
 EXIT_KEYBOARD_INTERRUPT = 3
+EXIT_TIMEOUT = 4
 g_exitCode = EXIT_KEYBOARD_INTERRUPT
 
 g_opts = None
 g_eventLoop = None
+g_startCounter = None
 def checkMacAddress( mac ):
     try:
         if re.match("[0-9a-f]{2}([-:])[0-9a-f]{2}(\\1[0-9a-f]{2}){4}$", mac.lower()):
@@ -49,8 +52,14 @@ def initializeArgParser():
 	parser.add_argument( '-m', '--mac', 
 						action = 'append',
 						dest = "mac",
-						type=checkMacAddress,
+						type = checkMacAddress,
 						help = "Search this MAC address." )
+
+	# Time out
+	parser.add_argument( '-t', '--timeout',
+						type = int,
+						default = 0,
+						help = "Set timeout value in seconds (0 to disable it and default is 0)." )
 
 	# Exit when operation done
 	parser.add_argument( '--exit',
@@ -91,6 +100,10 @@ def displayBeacon( event ):
 
 # ----- process bluetooth data -----
 def process( data ):
+	global g_exitCode
+	global g_opts
+	global g_startCounter
+
 	# get HCI event
 	event = aiobs.HCI_Event()
 	event.decode(data)
@@ -110,6 +123,11 @@ def process( data ):
 	else:
 		# display beacon
 		displayBeacon( event )
+
+	# exit with timeout ?
+	if g_opts.timeout and ( ( time.perf_counter() - g_startCounter ) >= g_opts.timeout ):
+		g_exitCode = EXIT_TIMEOUT
+		g_eventLoop.stop()
 
 # ----- main -----
 if __name__ == "__main__":
@@ -138,14 +156,16 @@ if __name__ == "__main__":
 	# Attach processing
 	btctrl.process = process
 
+	print( "Scanning BLE devices..." )
 	if g_opts.mac:
-		print( "Searhcing for devices : " )
-		for item in g_opts.mac:
-			print( "  - " + item )
-	else:
-		pass
+		print( "Filtering using MAC address : " )
+		for mac in g_opts.mac:
+			print( "  - " + mac )
 
+	print()
+	
 	# go
+	g_startCounter = time.perf_counter()
 	btctrl.send_scan_request()
 	try:
 		# g_eventLoop.run_until_complete(coro)
