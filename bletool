@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+
+# https://ukbaz.github.io/howto/beacon_scan_cmd_line.html
+
+
+import os
+import sys
+import argparse
+import re
+import aioblescan as aiobs
+import asyncio
+
+# Script information
+APP_VERSION = '0.01'
+APP_NAME = os.path.basename(__file__)
+APP_DESCRIPTION = "Beacon tools"
+APP_AUTHOR = "Alexandre Gambier"
+APP_WWW = "https://github.com/agambier/beacon-tool"
+APP_RIGHTS = "(C) 2019 " + APP_AUTHOR
+
+# exit codes
+EXIT_SUCCESS = 0
+EXIT_INVALID_COMMAND_LINE = 1
+EXIT_DISPLAYED_VERSION = 2
+EXIT_KEYBOARD_INTERRUPT = 3
+g_exitCode = EXIT_KEYBOARD_INTERRUPT
+
+g_opts = None
+g_eventLoop = None
+def checkMacAddress( mac ):
+    try:
+        if re.match("[0-9a-f]{2}([-:])[0-9a-f]{2}(\\1[0-9a-f]{2}){4}$", mac.lower()):
+            return mac.lower()
+    except:
+        pass
+
+    raise argparse.ArgumentTypeError( "%s is not a MAC address" % mac )
+
+# ----- command line -----
+def initializeArgParser():
+	parser = argparse.ArgumentParser( description = APP_DESCRIPTION + " v" + APP_VERSION + " " + APP_RIGHTS )
+
+	# HCI device
+	parser.add_argument( '-d', '--device', 
+						type = int,
+						default = 0,
+                    	help = "Select the hciX device to use (default 0, i.e. hci0)." )
+	# MAC addresses list
+	parser.add_argument( '-m', '--mac', 
+						action = 'append',
+						dest = "mac",
+						type=checkMacAddress,
+						help = "Search this MAC address." )
+
+	# Exit when operation done
+	parser.add_argument( '--exit',
+						action = 'store_true',
+						default = False,
+						help = "Exit as soon the operation is done (i.e. Search for MAC adresses) otherwise runs until CTRL+C is pressed." )
+	# Version
+	parser.add_argument( '--version',
+						action = 'store_true',
+						default = False,
+						help = "Display version and exit." )
+
+	try:
+		g_opts = parser.parse_args()
+	except Exception as e:
+		parser.error( "Error: " + str( e ) )
+		g_opts = None
+
+	return g_opts
+
+def getBeaconAttribute( event, attribute ):
+	attr = event.retrieve( attribute )
+	if 0 == len( attr ):
+		return None
+
+	return attr[ 0 ].val
+
+def displayBeacon( event ):
+	name = getBeaconAttribute( event, "Complete Name" )
+	if not name:
+		name = b'???'
+
+	print( "Device:" )
+	print( "  MAC  : " + getBeaconAttribute( event, "peer" ) ) 
+	print( "  rssi : " + str( getBeaconAttribute( event, "rssi" ) ) )  
+	print( "  name : " + name.decode( 'utf-8' ) )
+	print()
+
+# ----- process bluetooth data -----
+def process( data ):
+	# get HCI event
+	event = aiobs.HCI_Event()
+	event.decode(data)
+
+	# get mac address
+	mac = getBeaconAttribute( event, "peer" )
+	if not mac:
+		return
+
+	if g_opts.mac:
+		# searching for specific MAC addresses ?
+		if mac in g_opts.mac:
+			displayBeacon( event )
+			if g_opts.exit:
+				g_exitCode = EXIT_SUCCESS
+				g_eventLoop.stop()
+	else:
+		# display beacon
+		displayBeacon( event )
+
+# ----- main -----
+if __name__ == "__main__":
+	g_opts = initializeArgParser()
+	if None == g_opts:
+		sys.exit( EXIT_INVALID_COMMAND_LINE )
+
+	# display version ?
+	if g_opts.version:
+		print( APP_NAME + " v" + APP_VERSION + " " + APP_RIGHTS )
+		print( APP_DESCRIPTION + " is maintained and supported at " + APP_WWW )
+		sys.exit( EXIT_DISPLAYED_VERSION )
+
+	# create Event loop
+	g_eventLoop = asyncio.get_event_loop()
+	# create and configure a raw socket
+	mysocket = aiobs.create_bt_socket( g_opts.device )
+
+	# create a connection with the raw socket
+	# This used to work but now requires a STREAM socket.
+	# fac=g_eventLoop.create_connection(aiobs.BLEScanRequester,sock=mysocket)
+	# Thanks to martensjacobs for this fix
+	fac = g_eventLoop._create_connection_transport( mysocket, aiobs.BLEScanRequester, None, None )
+	# Start it
+	conn, btctrl = g_eventLoop.run_until_complete( fac )
+	# Attach processing
+	btctrl.process = process
+
+	if g_opts.mac:
+		print( "Searhcing for devices : " )
+		for item in g_opts.mac:
+			print( "  - " + item )
+	else:
+		pass
+
+	# go
+	btctrl.send_scan_request()
+	try:
+		# g_eventLoop.run_until_complete(coro)
+		g_eventLoop.run_forever()
+	except KeyboardInterrupt:
+		print( 'keyboard interrupt' )
+	finally:
+		btctrl.stop_scan_request()
+		command = aiobs.HCI_Cmd_LE_Advertise(enable=False)
+		btctrl.send_command(command)
+		conn.close()
+		g_eventLoop.close()
+
+	sys.exit( g_exitCode )
