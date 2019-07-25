@@ -98,6 +98,15 @@ def displayBeacon( event ):
 	print( "  name : " + name.decode( 'utf-8' ) )
 	print()
 
+def timeoutTask():
+	while True:
+		# exit with timeout ?
+		if g_opts.timeout and ( ( time.perf_counter() - g_startCounter ) >= g_opts.timeout ):
+			g_exitCode = EXIT_TIMEOUT
+			g_eventLoop.stop()
+			return
+		yield from asyncio.sleep( 0.5 )
+
 # ----- process bluetooth data -----
 def process( data ):
 	global g_exitCode
@@ -121,11 +130,6 @@ def process( data ):
 		else:
 			# display beacon
 			displayBeacon( event )
-
-	# exit with timeout ?
-	if g_opts.timeout and ( ( time.perf_counter() - g_startCounter ) >= g_opts.timeout ):
-		g_exitCode = EXIT_TIMEOUT
-		g_eventLoop.stop()
 
 # ----- main -----
 if __name__ == "__main__":
@@ -162,6 +166,8 @@ if __name__ == "__main__":
 
 	print()
 	
+	if g_opts.timeout:
+		asyncio.ensure_future( timeoutTask() )
 	# go
 	g_startCounter = time.perf_counter()
 	btctrl.send_scan_request()
